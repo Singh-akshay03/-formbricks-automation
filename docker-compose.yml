@@ -1,0 +1,109 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: formbricks-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: formbricks
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    networks:
+      - formbricks-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: valkey/valkey:8.0
+    container_name: formbricks-redis
+    restart: unless-stopped
+    command: valkey-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - formbricks-network
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  formbricks:
+    image: ghcr.io/formbricks/formbricks:latest
+    container_name: formbricks-app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      # Database
+      DATABASE_URL: postgresql://postgres:${POSTGRES_PASSWORD:-postgres}@postgres:5432/formbricks?schema=public
+
+      # Redis
+      REDIS_URL: redis://redis:6379
+
+      # Application URLs
+      WEBAPP_URL: ${FORMBRICKS_URL:-http://localhost:3000}
+      NEXTAUTH_URL: ${FORMBRICKS_URL:-http://localhost:3000}
+
+      # Secrets (generate with: openssl rand -hex 32)
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:-changeme-nextauth-secret-min-32-chars}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:-changeme-encryption-key-min-32-chars}
+      CRON_SECRET: ${CRON_SECRET:-changeme-cron-secret}
+
+      # Email (optional - uncomment and configure if needed)
+      # MAIL_FROM: noreply@example.com
+      # SMTP_HOST: smtp.example.com
+      # SMTP_PORT: 587
+      # SMTP_USER: your-smtp-user
+      # SMTP_PASSWORD: your-smtp-password
+
+      # Optional features
+      PRIVACY_URL: ""
+      TERMS_URL: ""
+      IMPRINT_URL: ""
+
+      # Development settings
+      SIGNUP_DISABLED: "0"
+      EMAIL_VERIFICATION_DISABLED: "1"
+      PASSWORD_RESET_DISABLED: "0"
+
+      # Short URL
+      SHORT_URL_BASE: ${FORMBRICKS_URL:-http://localhost:3000}
+
+      # Uploads (using local storage)
+      UPLOADS_DIR: /home/nextjs/apps/web/uploads
+
+    volumes:
+      - uploads_data:/home/nextjs/apps/web/uploads
+    networks:
+      - formbricks-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+networks:
+  formbricks-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads_data:
